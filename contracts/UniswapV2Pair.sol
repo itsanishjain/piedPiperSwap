@@ -3,16 +3,41 @@ pragma solidity ^0.8.0;
 
 import "../interfaces/IUniswapV2ERC20.sol";
 import "../interfaces/IUniswapV2Pair.sol";
+import "../interfaces/IERC20.sol";
+import "../interfaces/IUniswapV2Callee.sol";
+
+import "../interfaces/IUniswapV2Factory.sol";
+
+import "./libraries/Math.sol";
+
+// NOTE: Source: https://betterprogramming.pub/uniswap-smart-contract-breakdown-ea20edf1a0ff
 
 contract UniswapV2Pair is IUniswapV2Pair, IUniswapV2ERC20 {
     // TODO: have to write 30 lines of code of uniswap
 
+    /*
+
+    when you want to call a smart contract without knowing its ABI
+
+    
+        well i guess you know a single function but not necessarily want to create an interface for it
+        perhaps because you are calling arbitrary functions
+    for e.g. multisig wallets can do anything possible in blockchain, but multisig wallets themselves are smart contracts
+    so they need to be able to call arbitrary functions on other contracts
+    and there is no way to have the ABI of literally every single possible thing on ethereum
+    so you use the low level call functions and encode with function selectors to call those functio
+
+    */
+
     // TODO
     uint256 public constant MINIMUM_LIQUIDITY = 10**3;
+
+    // SELECTOR allows you to call the ERC-20 contract via its ABI
+
     bytes4 private constant SELECTOR =
         bytes4(keccak256(bytes("transfer(address,uint256)")));
 
-    address public factory;
+    address public factory; // address who deploys
     address public token0;
     address public token1;
 
@@ -61,6 +86,143 @@ contract UniswapV2Pair is IUniswapV2Pair, IUniswapV2ERC20 {
             abi.encodeWithSelector(SELECTOR, to, value)
         );
 
-        require(success && (data.length == 0 || abi.decode(data,(bool))),'UniswapV2: TRANSFER_FAILED');
+        require(
+            success && (data.length == 0 || abi.decode(data, (bool))),
+            "UniswapV2: TRANSFER_FAILED"
+        );
     }
+
+    // TODO: Skiping the events
+
+    // event Mint(address indexed sender, uint amount0, uint amount1);
+
+    // event Burn(address indexed sender, uint amount0, uint amount1, address indexed to);
+
+    // emit Mint(0x1234,12);
+
+    constructor() {
+        factory = msg.sender;
+    }
+
+    // called once by the factory at the time of deployment
+
+    function initialize(address _token0, address _token1) external {
+        require(msg.sender == factory, "UNISWAP: FORBIDDEN");
+
+        token0 = _token0;
+        token1 = _token1;
+    }
+
+    /*
+        The _update function below is called whenever there are new funds deposited or withdrawn by the liquidity providers or tokens are swapped by the traders.
+                         OR
+        update reserves and, on the first call per block, price accumulators
+
+
+        Some interesting maths
+
+        uint256 MAX_INT = 
+        115792089237316195423570985008687907853269984665640564039457584007913129639935
+
+                        OR
+
+        uint256 MAX_INT = uint256(-1)
+
+        link to learn more about this
+
+        https://forum.openzeppelin.com/t/using-the-maximum-integer-in-solidity/3000
+
+
+
+
+    */
+
+    function _update(
+        uint256 balance0,
+        uint256 balance1,
+        uint112 _reserve0,
+        uint112 _reserve1
+    ) private {
+        /* 
+    NOTE: using 0.8.4 and above while orignal code uses "pragma solidity =0.5.16" and Now Overflow and uderflows sloves so just comment this piece of code.
+
+    */
+
+        // require(balance0 <= uint112(-1) && balance1 <= uint112(-1), 'UniswapV2: OVERFLOW');
+
+        // TODO: Why mod 2**32 is used, Just to typecast
+
+        uint32 blockTimeStamp = uint32(block.timestamp % 2**32);
+
+        uint32 timeElapsed = blockTimeStamp - blockTimeStampLast;
+
+        if (timeElapsed > 0 && _reserve0 != 0 && _reserve1 != 0) {
+            /* 
+        Note: Don't know what these code are doing
+
+            price0CumulativeLast += uint(UQ112x112.encode(_reserve1).uqdiv(_reserve0)) * timeElapsed;
+
+            price1CumulativeLast += uint(UQ112x112.encode(_reserve0).uqdiv(_reserve1)) * timeElapsed;
+
+
+           
+        */
+
+            // Here is my version of above code
+            price0ComulativeLast += (_reserve1 / _reserve0) * timeElapsed;
+
+            price1ComulativeLast += (_reserve0 / _reserve1) * timeElapsed;
+        }
+
+        reserve0 = uint112(balance0);
+        reserve1 = uint112(balance1);
+        blockTimeStampLast = blockTimeStamp;
+
+        emit Sync(reserve0, reserve1);
+    }
+
+    // Here we complete 85 lines of code
+
+    /*
+      Protocol fee — Uniswap v2 introduced a switchable protocol fee. This protocol fee goes to the Uniswap team for their efforts in maintaining Uniswap. At the moment, this protocol fee is turned off but it can be turned on in the future. When it’s on, the traders will still pay the same fee for trading but 1/6 of this fee will now go to the Uniswap team and the rest 5/6 will go to the liquidity providers as the reward for providing their funds. 
+
+      0.3% of 1280000000
+    */
+
+    // if fee is on, mint liquidity equivalent to 1/6th of the growth in sqrt(k)
+
+    function _mintFee(uint112 _reserve0, uint112 _reserve1)
+        private
+        returns (bool feeOn)
+    {
+        address feeTo = IUniswapV2Factory(factory).feeTo();
+        feeOn = feeTo != address(0);
+
+        uint256 _kLast = kLast; // gas saving
+
+        if (feeOn) {
+            if (_kLast != 0) {
+                uint256 rootK = Math.sqrt(uint256(_reserve0) * _reserve1);
+                uint256 rootKLast = Math.sqrt(_kLast);
+
+                if (rootK > rootKLast) {
+                    // TODO: Don't know why this error comes YET
+
+                    uint256 numerator = totalSupply * (rootK - rootKLast);
+                    uint256 denominator = rootK * 5 + rootKLast;
+
+                    uint256 liquidity = numerator / denominator;
+
+                    if (liquidity > 0) {
+                        // TODO: Need to create this function
+                        _mint(feeTo, liquidity);
+                    }
+                }
+            } else if (_kLast != 0) {
+                kLast = 0;
+            }
+        }
+    }
+
+    // DONE Coding 108 lines
 }
