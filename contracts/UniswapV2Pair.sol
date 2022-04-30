@@ -104,7 +104,7 @@ contract UniswapV2Pair is IUniswapV2Pair, IUniswapV2ERC20 {
         factory = msg.sender;
     }
 
-    // called once by the factory at the time of deployment
+    // called once by the owner to set factory at the time of deployment
 
     function initialize(address _token0, address _token1) external {
         require(msg.sender == factory, "UNISWAP: FORBIDDEN");
@@ -225,4 +225,58 @@ contract UniswapV2Pair is IUniswapV2Pair, IUniswapV2ERC20 {
     }
 
     // DONE Coding 108 lines
+
+    /*
+    
+        Minting is when a liquidity provider adds funds to the pool and as a result, new pool ownership tokens are minted "Uniswap tokens"
+
+
+        Burning is the opposite — liquidity provider withdraws funds (and the accumulated rewards) and his pool ownership tokens are burned (destroyed).
+    
+    */
+
+    function mint(address to) external lock returns (uint256 liquidity) {
+        (uint112 _reserve0, uint112 _reserve1, ) = getReserves(); /// gas savings
+
+        uint256 balance0 = IERC20(token0).balanceOf(address(this));
+        uint256 balance1 = IERC20(token1).balanceOf(address(this));
+
+        uint256 amount0 = balance0 - _reserve0;
+        uint256 amount1 = balance1 - _reserve1;
+
+        bool feeOn = _mintFee(_reserve0, _reserve1);
+
+        // TODO: Have to work on UniswapV2ERC20.sol
+        uint256 _totalsupply = totalSupply; // gas saving, Must be defined here since totalSupply can update in _mintFee
+
+        if (_totalsupply == 0) {
+            liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
+
+            /* 
+                If totalSupply is 0 it means pool is brand new so we need to lock in 
+                Minimu_liquidity amount pool ownership tokens to avoid division by 0 
+
+                "liquidity" variable => is the amount of new "pool ownership tokens" that need to be minted to the liquidity provider. The liquidity provider gets a proportional amount of pool ownership tokens depending on how much new funds he provides
+            */
+            _mint(address(0), MINIMUM_LIQUIDITY);
+        }
+        liquidity = Math.min(
+            (amount0 * _totalSupply) / _reserve0,
+            (amount1 * totalSupply) / _reserve1
+        );
+
+        require(liquidity > 0, "UniswapV2: INSUFFICIENT_LIQUIDITY_MINTED");
+        _mint(to, liquidity);
+
+        _update(balance0, balance1, _reserve0, _reserve1);
+        if (feeOn) {
+            // reserve0 and reserve1 are up-to-date
+            kLast = uint256(reserve0 * reserve1);
+
+            emit Burn(msg.sender, amount0, amount1, to);
+        }
+    }
+
+
+    // DONE 155 Lines of code
 }
