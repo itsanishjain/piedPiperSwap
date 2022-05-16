@@ -162,10 +162,7 @@ contract UniswapV2Pair is IUniswapV2Pair, IUniswapV2ERC20 {
 
             price0CumulativeLast += uint(UQ112x112.encode(_reserve1).uqdiv(_reserve0)) * timeElapsed;
 
-            price1CumulativeLast += uint(UQ112x112.encode(_reserve0).uqdiv(_reserve1)) * timeElapsed;
-
-
-           
+            price1CumulativeLast += uint(UQ112x112.encode(_reserve0).uqdiv(_reserve1)) * timeElapsed;   
         */
 
             // Here is my version of above code
